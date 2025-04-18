@@ -73,39 +73,38 @@ def extract_invoice_number(full_text, lines):
     
     # Danh sách các mẫu regex để tìm số hóa đơn
     invoice_number_patterns = [
-        # Mẫu 1: Các kiểu định dạng chuẩn với "Số HĐ", "Số HD", etc.
+        # Mẫu 1: Ưu tiên mã hóa đơn dài (6 chữ số trở lên) sau "Số:", "Số HĐ:", v.v.
+        r'(?:Số|Số\s*HĐ|Số\s*HD|Số\s*hóa\s*đơn|Số\s*hoá\s*đơn|Mã\s*HĐ|Mã\s*HD)\s*[:#=\.]?\s*(\d{6,})',
+        
+        # Mẫu 2: Các kiểu định dạng chuẩn với "Số HĐ", "Số HD", etc.
         r'(?:Số\s*HĐ|Số\s*HD|Số\s*hóa\s*đơn|Số\s*hoá\s*đơn|Mã\s*HĐ|Mã\s*HD)\s*[:#=\.]?\s*([A-Za-z0-9-\/]+)',
         
-        # Mẫu 2: "HÓA ĐƠN THANH TOÁN" và sau đó là số
+        # Mẫu 3: "HÓA ĐƠN THANH TOÁN" và sau đó là số
         r'HÓA\s*ĐƠN\s*THANH\s*TOÁN\s*(?:.*\n){0,2}.*?(?:Số|No|Mã)\s*[:#=\.]?\s*([A-Za-z0-9-\/]+)',
         
-        # Mẫu 3: "HD" hoặc "HĐ" và sau đó là số
+        # Mẫu 4: "HD" hoặc "HĐ" và sau đó là số
         r'(?:HD|HĐ|H\.Đ|H\.D)[:#=\.\s]*([A-Za-z0-9-\/]+)',
         
-        # Mẫu 4: "Số" hoặc "No." đứng một mình
-        r'(?:Số|No\.?)[:#=\.\s]*([A-Za-z0-9-\/]+)',
-        
         # Mẫu 5: Tiếng Anh - Invoice number
-        r'(?:Invoice\s*(?:Number|No\.?|ID)|Bill\s*No\.?)\s*[:#=]?\s*([A-Za-z0-9-\/]+)'
+        r'(?:Invoice\s*(?:Number|No\.?|ID)|Bill\s*No\.?)\s*[:#=]?\s*([A-Za-z0-9-\/]+)',
     ]
-    
-    # Tìm kiếm theo từng dòng với mẫu cụ thể "Số HĐ:" hoặc "Số HD:"
-    for line in lines:
-        if re.search(r'(Số\s*HĐ|Số\s*HD|Số\s*hoá\s*đơn|Số\s*hóa\s*đơn)', line, re.IGNORECASE):
-            # Tìm số trong dòng này
-            numbers = re.findall(r'[A-Za-z0-9-\/]+', line)
-            # Lấy số cuối cùng trong dòng (thường là số hóa đơn)
-            if numbers and len(numbers) > 0:
-                candidate = numbers[-1]
-                # Kiểm tra xem có phải là dạng số hợp lệ
-                if re.match(r'^[A-Za-z0-9-\/]+$', candidate) and len(candidate) <= 10:
-                    return candidate
     
     # Tìm kiếm qua các mẫu đã định nghĩa
     for pattern in invoice_number_patterns:
         match = re.search(pattern, full_text, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            candidate = match.group(1).strip()
+            # Kiểm tra để loại bỏ số nhà trong địa chỉ
+            nearby_text = get_text_around(full_text, candidate, 50).lower()
+            if not any(keyword in nearby_text for keyword in ["đường", "phố", "quận", "huyện", "thành phố"]):
+                return candidate
+    
+    # Tìm kiếm theo từng dòng với mẫu cụ thể
+    for line in lines:
+        if re.search(r'(Số\s*HĐ|Số\s*HD|Số\s*hoá\s*đơn|Số\s*hóa\s*đơn)', line, re.IGNORECASE):
+            match = re.search(r'(\d{6,})', line)
+            if match:
+                return match.group(1).strip()
     
     # Nếu không tìm thấy theo các mẫu tiêu chuẩn, tìm kiếm nâng cao
     return find_invoice_number_advanced(full_text, lines)
@@ -123,7 +122,7 @@ def find_invoice_number_advanced(full_text, lines):
         if num in top_lines and re.match(r'^[A-Za-z0-9-\/]+$', num):
             nearby_text = get_text_around(top_lines, num, 20)
             # Nếu gần số này có từ khóa liên quan đến hóa đơn
-            if any(keyword in nearby_text.lower() for keyword in ["hd", "hđ", "số", "hoá đơn", "hóa đơn", "thanh toán", "bill"]):
+            if any(keyword in nearby_text.lower() for keyword in ["hd", "hđ", "số", "Số", "hoá đơn", "hóa đơn", "thanh toán", "bill"]):
                 return num
     
     return "Không tìm thấy số hóa đơn"
@@ -162,17 +161,24 @@ def extract_total_amount(full_text, lines):
             # Kiểm tra xem kết quả có hợp lệ không
             if is_valid_amount(amount):
                 return amount
+            
+    # Tìm "Tổng:" theo sau là số (có thể có dấu phẩy)
+    total_pattern = r'Tổng:\s*([\d\.,]+)'
+    match = re.search(total_pattern, full_text)
+    if match:
+        return clean_amount(match.group(1).strip())
     
     # Phương pháp 2: Tìm kiếm theo dòng với từ khóa cụ thể
     return find_total_by_keywords(lines)
+    
 
 def find_total_by_keywords(lines):
     """Tìm tổng tiền dựa trên từ khóa theo dòng"""
     
     # Danh sách các từ khóa liên quan đến tổng tiền
     amount_keywords = [
-        "tổng cộng", "tổng tiền", "tiền mặt", "thanh toán", 
-        "T.CONG","t.cong", "t.tiền", "thành tiền", "tổng", "total", "Tổng tiên"
+        "tổng cộng", "tổng tiền", "tiền mặt", "thanh toán", "Tổng"
+        "T.CONG","t.cong", "t.tiền", "thành tiền", "tổng", "total", "T.CONG"
     ]
     
     potential_amounts = []

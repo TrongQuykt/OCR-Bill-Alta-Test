@@ -169,7 +169,7 @@ with tab1:
 
     if uploaded_file is not None:
         # Hiển thị ảnh đã tải lên
-        st.image(uploaded_file, caption="Ảnh hóa đơn đã tải lên", use_column_width=True)
+        st.image(uploaded_file, caption="Ảnh hóa đơn đã tải lên", use_container_width=True)
         
         if process_btn:
             # Lưu file tạm thời
